@@ -1,0 +1,782 @@
+---
+title: "Demographic Analysis: Japan & United States"
+author: "Report"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    latex_engine: xelatex
+header-includes:
+  - \usepackage{booktabs}
+  - \usepackage{longtable}
+  - \usepackage{float}
+  - \usepackage{caption}
+  - \floatplacement{figure}{H}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo       = TRUE,
+  warning    = FALSE,
+  message    = FALSE,
+  fig.width  = 9,
+  fig.height = 6,
+  fig.align  = "center",
+  out.width  = "100%"
+)
+```
+
+```{r libraries}
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+library(scales)
+library(tidycensus)
+library(tigris)
+library(sf)
+library(patchwork)
+library(knitr)
+library(kableExtra)
+library(viridis)
+library(RColorBrewer)
+library(stringr)
+library(purrr) 
+
+options(tigris_use_cache = TRUE)
+options(scipen = 999)
+
+# ── Census API key ─────────────────────────────────────────────────────────────
+# Replace the string below with your key, or set it once in .Renviron:
+#   census_api_key("YOUR_KEY", install = TRUE)
+census_api_key("cae79ee00ab828454493cdbc63e0d615494c2a5e", overwrite = TRUE, install = FALSE)
+```
+
+\newpage
+
+# Part 1 – Analysis of Japanese Demographic Data
+
+## Data Loading & Cleaning
+
+```{r japan-load}
+# ── Subdivisions (population by year) ─────────────────────────────────────────
+subdiv_raw <- read_excel("japan-subdivisions.xlsx")
+
+# Standardise column names and drop the trailing arrow column
+subdiv <- subdiv_raw %>%
+  select(Name, Status, Native, pop1995, pop2000, pop2005, pop2010, pop2015, pop2020) %>%
+  mutate(across(starts_with("pop"), as.numeric))
+
+# ── Areas / density ────────────────────────────────────────────────────────────
+areas_raw <- read_excel("japan-prefecture-areas.xlsx")
+
+# Row 0 is an embedded sub-header – drop it and rename columns
+areas <- areas_raw %>%
+  slice(-1) %>%
+  select(
+    Rank         = 1,
+    Prefecture   = 2,
+    Japanese     = 3,
+    Area_km2     = 4,
+    Population   = 7,
+    Density      = 8,
+    Capital      = 12
+  ) %>%
+  mutate(
+    Rank       = as.integer(Rank),
+    Area_km2   = as.numeric(Area_km2),
+    Population = as.numeric(gsub(",", "", as.character(Population))),
+    Density    = as.numeric(Density)
+  )
+
+# Quick sanity check
+cat("Subdivisions:", nrow(subdiv), "rows |",
+    "Unique statuses:", paste(unique(subdiv$Status), collapse = ", "), "\n")
+cat("Areas:", nrow(areas), "rows\n")
+```
+
+## 1.1 Prefecture-Level Population Change (1995–2020)
+
+```{r prefecture-pct-change}
+# Filter to prefectures only
+prefectures <- subdiv %>%
+  filter(Status == "Prefecture") %>%
+  mutate(
+    pct_2000 = (pop2000 - pop1995) / pop1995 * 100,
+    pct_2005 = (pop2005 - pop1995) / pop1995 * 100,
+    pct_2010 = (pop2010 - pop1995) / pop1995 * 100,
+    pct_2015 = (pop2015 - pop1995) / pop1995 * 100,
+    pct_2020 = (pop2020 - pop1995) / pop1995 * 100
+  )
+
+# Summary table
+pref_table <- prefectures %>%
+  select(Name, pop1995, pct_2000, pct_2005, pct_2010, pct_2015, pct_2020) %>%
+  arrange(desc(pct_2020))
+
+kable(pref_table,
+      digits  = 1,
+      col.names = c("Prefecture", "Pop 1995",
+                    "% Δ 2000", "% Δ 2005", "% Δ 2010", "% Δ 2015", "% Δ 2020"),
+      caption = "Percentage population change relative to 1995 for all 47 prefectures",
+      booktabs = TRUE,
+      format   = "latex") %>%
+  kable_styling(latex_options = c("striped", "scale_down", "HOLD_position"),
+                font_size = 7)
+```
+
+## 1.2 Time-Series Line Plot – % Change Relative to 1995
+
+```{r prefecture-lineplot, fig.height=8}
+# Pivot to long format for plotting
+pref_long <- prefectures %>%
+  select(Name, pct_2000, pct_2005, pct_2010, pct_2015, pct_2020) %>%
+  pivot_longer(
+    cols      = starts_with("pct_"),
+    names_to  = "Year",
+    values_to = "pct_change"
+  ) %>%
+  mutate(Year = as.integer(str_extract(Year, "\\d{4}")))
+
+# Label only endpoints
+endpoint_labels <- pref_long %>%
+  filter(Year == 2020) %>%
+  arrange(pct_change)
+
+# Colour-code growth vs decline
+pref_long <- pref_long %>%
+  left_join(
+    prefectures %>% select(Name, pct_2020),
+    by = "Name"
+  ) %>%
+  mutate(direction = ifelse(pct_2020 >= 0, "Growth", "Decline"))
+
+ggplot(pref_long, aes(x = Year, y = pct_change,
+                      group = Name, colour = direction)) +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "grey40", linewidth = 0.4) +
+  geom_line(alpha = 0.65, linewidth = 0.55) +
+  geom_point(data = filter(pref_long, Year == 2020),
+             size = 1.4, alpha = 0.8) +
+  geom_text_repel(
+    data          = endpoint_labels,
+    aes(label     = Name),
+    size          = 2.2,
+    direction     = "y",
+    nudge_x       = 1,
+    segment.size  = 0.2,
+    max.overlaps  = 15,
+    colour        = "grey20"
+  ) +
+  scale_colour_manual(values = c("Growth" = "#2166ac", "Decline" = "#d73027")) +
+  scale_x_continuous(breaks = c(2000, 2005, 2010, 2015, 2020),
+                     limits = c(2000, 2023)) +
+  scale_y_continuous(labels = label_number(suffix = "%")) +
+  labs(
+    title    = "Percentage Population Change Relative to 1995",
+    subtitle = "All 47 Japanese Prefectures · 2000–2020",
+    x        = NULL,
+    y        = "% Change from 1995 Baseline",
+    colour   = NULL,
+    caption  = "Source: Japan Statistics Bureau"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    legend.position  = "top",
+    panel.grid.minor = element_blank()
+  )
+```
+
+## 1.3 1995 Population vs. 1995–2020 % Change
+
+```{r prefecture-scatter}
+pref_scatter <- prefectures %>%
+  mutate(
+    label_flag = abs(pct_2020) > 8 | pop1995 > 5e6,
+    pop_m      = pop1995 / 1e6
+  )
+
+# Pearson correlation
+r <- cor(pref_scatter$pop1995, pref_scatter$pct_2020, use = "complete.obs")
+
+ggplot(pref_scatter, aes(x = pop_m, y = pct_2020)) +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "grey50") +
+  geom_point(aes(colour = pct_2020 >= 0), size = 3.5, alpha = 0.75) +
+  geom_smooth(method = "lm", se = TRUE, colour = "grey30",
+              linewidth = 0.7, linetype = "solid") +
+  geom_text_repel(
+    data         = filter(pref_scatter, label_flag),
+    aes(label    = Name),
+    size         = 3,
+    box.padding  = 0.35,
+    max.overlaps = 15
+  ) +
+  scale_colour_manual(values = c("TRUE" = "#2166ac", "FALSE" = "#d73027"),
+                      labels = c("TRUE" = "Growth", "FALSE" = "Decline")) +
+  scale_x_continuous(labels = label_number(suffix = "M")) +
+  scale_y_continuous(labels = label_number(suffix = "%")) +
+  annotate("text", x = Inf, y = Inf,
+           label   = paste0("r = ", round(r, 3)),
+           hjust   = 1.1, vjust = 1.5,
+           size    = 4, colour = "grey20") +
+  labs(
+    title    = "1995 Population vs. 1995–2020 Percentage Change",
+    subtitle = "47 Japanese Prefectures",
+    x        = "1995 Population (millions)",
+    y        = "% Change 1995–2020",
+    colour   = NULL,
+    caption  = paste0("Pearson r = ", round(r, 3),
+                      "; OLS regression line with 95% CI")
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "top", panel.grid.minor = element_blank())
+```
+
+**Interpretation:** The correlation coefficient (r = `r round(r, 3)`) suggests
+`r if(abs(r) < 0.2) "little to no" else if(abs(r) < 0.5) "a weak" else "a moderate"`
+relationship between a prefecture's initial population size and its subsequent growth
+trajectory over the 1995–2020 period.
+
+## 1.4 City Size and Population Change
+
+```{r city-analysis, fig.height=6}
+cities <- subdiv %>%
+  filter(str_detect(Status, "City")) %>%
+  mutate(
+    pct_2020 = (pop2020 - pop1995) / pop1995 * 100,
+    size_cat = case_when(
+      pop1995 < 30000                    ~ "Small  (<30k)",
+      pop1995 >= 30000  & pop1995 < 100000 ~ "Medium (30k–100k)",
+      pop1995 >= 100000 & pop1995 < 300000 ~ "Large  (100k–300k)",
+      pop1995 >= 300000 & pop1995 < 700000 ~ "Major  (300k–700k)",
+      TRUE                               ~ "Metro  (700k+)"
+    ),
+    size_cat = factor(size_cat,
+                      levels = c("Small  (<30k)", "Medium (30k–100k)",
+                                 "Large  (100k–300k)", "Major  (300k–700k)",
+                                 "Metro  (700k+)"))
+  ) %>%
+  filter(!is.na(pct_2020))
+
+# Summary statistics by size category
+city_summary <- cities %>%
+  group_by(size_cat) %>%
+  summarise(
+    n         = n(),
+    median_pct = median(pct_2020, na.rm = TRUE),
+    mean_pct  = mean(pct_2020, na.rm = TRUE),
+    pct_grew  = mean(pct_2020 > 0, na.rm = TRUE) * 100,
+    .groups   = "drop"
+  )
+
+kable(city_summary,
+      digits = 1,
+      col.names = c("City Size", "N", "Median % Δ", "Mean % Δ", "% Cities that Grew"),
+      caption  = "Population change 1995–2020 by city size category",
+      booktabs = TRUE) %>%
+  kable_styling(latex_options = c("striped", "HOLD_position"))
+
+# Box plot
+ggplot(cities, aes(x = size_cat, y = pct_2020, fill = size_cat)) +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "grey50") +
+  geom_boxplot(alpha = 0.8, outlier.size = 1.2, outlier.alpha = 0.5) +
+  scale_fill_brewer(palette = "RdYlBu", direction = -1) +
+  scale_y_continuous(labels = label_number(suffix = "%")) +
+  labs(
+    title    = "Population Change 1995–2020 by City Size",
+    subtitle = "Japanese Cities (shi)",
+    x        = "City Size Category (1995 Population)",
+    y        = "% Change 1995–2020",
+    fill     = NULL,
+    caption  = paste0("n = ", nrow(cities), " cities")
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 20, hjust = 1),
+        panel.grid.minor = element_blank())
+```
+
+## 1.5 Population Density vs. % Population Growth (Prefectures)
+
+```{r density-correlation, fig.height=6}
+# Join prefectures with areas data
+pref_density <- prefectures %>%
+  left_join(areas %>% select(Prefecture, Density),
+            by = c("Name" = "Prefecture")) %>%
+  filter(!is.na(Density))
+
+r_dens <- cor(pref_density$Density, pref_density$pct_2020, use = "complete.obs")
+
+cat("Pearson correlation (Density vs % Growth):", round(r_dens, 4), "\n")
+cat("Spearman correlation (Density vs % Growth):",
+    round(cor(pref_density$Density, pref_density$pct_2020,
+              method = "spearman", use = "complete.obs"), 4), "\n")
+
+ggplot(pref_density, aes(x = Density, y = pct_2020)) +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "grey50") +
+  geom_point(aes(colour = pct_2020 >= 0), size = 3.5, alpha = 0.75) +
+  geom_smooth(method = "lm", se = TRUE, colour = "grey30", linewidth = 0.7) +
+  geom_text_repel(
+    aes(label = Name),
+    size = 3, max.overlaps = 12,
+    box.padding = 0.3
+  ) +
+  scale_colour_manual(values = c("TRUE" = "#2166ac", "FALSE" = "#d73027"),
+                      labels = c("TRUE" = "Growth", "FALSE" = "Decline")) +
+  scale_x_log10(labels = label_comma()) +
+  scale_y_continuous(labels = label_number(suffix = "%")) +
+  annotate("text", x = Inf, y = Inf,
+           label  = paste0("Pearson r = ", round(r_dens, 3)),
+           hjust  = 1.1, vjust = 1.5, size = 4, colour = "grey20") +
+  labs(
+    title    = "Population Density vs. Population Change 1995–2020",
+    subtitle = "47 Japanese Prefectures (density on log scale)",
+    x        = "Population Density 1995 (persons/km²) — log scale",
+    y        = "% Change 1995–2020",
+    colour   = NULL,
+    caption  = paste0("Source: Japan Statistics Bureau / japan-prefecture-areas.xlsx\n",
+                      "Pearson r = ", round(r_dens, 3),
+                      "  |  Spearman ρ = ",
+                      round(cor(pref_density$Density, pref_density$pct_2020,
+                                method = "spearman", use = "complete.obs"), 3))
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "top", panel.grid.minor = element_blank())
+```
+
+\newpage
+
+# Part 2 – U.S. Census & TidyCensus Analysis
+
+## 2.1 Variable Verification
+
+Before pulling data, we document the exact Census variables used.
+
+| Variable     | Decennial Year | Table | Description |
+|:-------------|:------:|:------|:------------|
+| `P001001`    | 2000   | P1    | Total population (SF1, Summary File 1) |
+| `P1_001N`    | 2020   | P1    | Total population (Redistricting data / PL 94-171) |
+
+```{r variable-check}
+# Inspect 2000 and 2020 variable catalogues
+vars_2000 <- load_variables(2000, "sf1", cache = TRUE)
+vars_2020 <- load_variables(2020, "pl",  cache = TRUE)
+
+vars_2000 %>% filter(name == "P001001") %>%
+  select(name, label, concept) %>%
+  kable(caption = "2000 Census variable P001001", booktabs = TRUE) %>%
+  kable_styling(latex_options = "HOLD_position")
+
+vars_2020 %>% filter(name == "P1_001N") %>%
+  select(name, label, concept) %>%
+  kable(caption = "2020 Census variable P1\\_001N", booktabs = TRUE) %>%
+  kable_styling(latex_options = "HOLD_position")
+```
+
+## 2.2 County Population Change 2000–2020
+
+```{r county-pop, cache=TRUE}
+# Pull 2000 county populations
+pop_2000 <- get_decennial(
+  geography = "county",
+  variables = "P001001",
+  year      = 2000,
+  sumfile   = "sf1"
+) %>%
+  select(GEOID, NAME, pop2000 = value)
+
+# Pull 2020 county populations
+pop_2020 <- get_decennial(
+  geography = "county",
+  variables = "P1_001N",
+  year      = 2020,
+  sumfile   = "pl"
+) %>%
+  select(GEOID, NAME, pop2020 = value)
+
+# Combine and calculate % change
+county_pop <- pop_2000 %>%
+  inner_join(pop_2020, by = "GEOID") %>%
+  mutate(
+    pct_change = (pop2020 - pop2000) / pop2000 * 100,
+    state_fips = str_sub(GEOID, 1, 2)
+  ) %>%
+  filter(pop2000 > 0)
+
+cat("Counties with population data:", nrow(county_pop), "\n")
+cat("Summary of % change:\n")
+print(summary(county_pop$pct_change))
+```
+
+## 2.3 Loading RUCC Codes
+
+```{r rucc-load}
+# USDA Rural-Urban Continuum Codes 2013
+# Download manually from:
+#   https://www.ers.usda.gov/data-products/rural-urban-continuum-codes/
+# Save as "ruralurbancodes2013.xls" in the working directory.
+# Column layout: FIPS | State | County_Name | Population_2010 | RUCC_2013 | Description
+
+rucc_path <- "ruralurbancodes2013.xls"
+
+if (file.exists(rucc_path)) {
+  rucc_raw <- read_excel(rucc_path)
+
+  # Flexible column detection
+  fips_col  <- grep("(?i)fips",     names(rucc_raw), value = TRUE)[1]
+  rucc_col  <- grep("(?i)rucc_2013", names(rucc_raw), value = TRUE)[1]
+
+  rucc <- rucc_raw %>%
+    rename(GEOID = all_of(fips_col),
+           RUCC  = all_of(rucc_col)) %>%
+    mutate(
+      GEOID = str_pad(as.character(GEOID), 5, pad = "0"),
+      RUCC  = as.integer(RUCC),
+      metro = ifelse(RUCC <= 3, "Metro", "Nonmetro"),
+      metro3 = case_when(
+        RUCC %in% 1:3 ~ "Metro",
+        RUCC %in% 4:6 ~ "Micropolitan",
+        RUCC %in% 7:9 ~ "Rural"
+      )
+    ) %>%
+    select(GEOID, RUCC, metro, metro3)
+
+  county_pop <- county_pop %>% left_join(rucc, by = "GEOID")
+  cat("RUCC file loaded. Distribution:\n")
+  print(table(county_pop$RUCC, useNA = "ifany"))
+} else {
+  warning("RUCC file not found. Scatter plots coloured by RUCC will be skipped.")
+  county_pop <- county_pop %>%
+    mutate(RUCC = NA_integer_, metro = NA_character_, metro3 = NA_character_)
+}
+```
+
+## 2.4 Scatter Plots – County Growth Rate vs. Total Population
+
+### 2.4a All Counties (no grouping)
+
+```{r scatter-all, fig.height=6}
+ggplot(county_pop, aes(x = pop2000 / 1e3, y = pct_change)) +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "grey50") +
+  geom_point(alpha = 0.25, size = 0.9, colour = "#2166ac") +
+  geom_smooth(method = "loess", se = FALSE, colour = "#d73027",
+              linewidth = 0.8, span = 0.5) +
+  scale_x_log10(labels = label_comma(suffix = "k")) +
+  scale_y_continuous(labels = label_number(suffix = "%"),
+                     limits = c(-80, 200)) +
+  labs(
+    title    = "U.S. County Population Growth Rate vs. Population Size",
+    subtitle = "2000–2020 · n ≈ 3,100 counties",
+    x        = "2000 Population (thousands) — log scale",
+    y        = "% Change 2000–2020",
+    caption  = "Source: U.S. Decennial Census via tidycensus"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(panel.grid.minor = element_blank())
+```
+
+### 2.4b Coloured by RUCC Code
+
+```{r scatter-rucc, fig.height=6}
+if (!all(is.na(county_pop$RUCC))) {
+  rucc_palette <- colorRampPalette(c("#1a9641", "#ffffbf", "#d7191c"))(9)
+
+  ggplot(county_pop %>% filter(!is.na(RUCC)),
+         aes(x = pop2000 / 1e3, y = pct_change,
+             colour = factor(RUCC))) +
+    geom_hline(yintercept = 0, linetype = "dashed", colour = "grey50") +
+    geom_point(alpha = 0.35, size = 0.9) +
+    scale_colour_manual(
+      values = rucc_palette,
+      name   = "RUCC 2013",
+      labels = c("1 Metro ≥1M", "2 Metro 250k–1M", "3 Metro <250k",
+                 "4 Adj+Urban 20k+", "5 Nonadj+Urban 20k+",
+                 "6 Adj+Urban 2.5k–20k", "7 Nonadj+Urban 2.5k–20k",
+                 "8 Adj+Rural", "9 Nonadj+Rural")
+    ) +
+    scale_x_log10(labels = label_comma(suffix = "k")) +
+    scale_y_continuous(labels = label_number(suffix = "%"),
+                       limits = c(-80, 200)) +
+    guides(colour = guide_legend(override.aes = list(alpha = 1, size = 2),
+                                 ncol = 1)) +
+    labs(
+      title    = "County Growth Rate vs. Population – Coloured by RUCC",
+      subtitle = "U.S. counties 2000–2020",
+      x        = "2000 Population (thousands) — log scale",
+      y        = "% Change 2000–2020",
+      caption  = "RUCC = USDA Rural-Urban Continuum Codes 2013"
+    ) +
+    theme_minimal(base_size = 11) +
+    theme(legend.position   = "right",
+          legend.text       = element_text(size = 7),
+          panel.grid.minor  = element_blank())
+} else {
+  cat("RUCC data unavailable – plot skipped.\n")
+}
+```
+
+### 2.4c Metro vs. Nonmetro (RUCC 1–3 vs. 4–9)
+
+```{r scatter-metro, fig.height=6}
+if (!all(is.na(county_pop$metro))) {
+  ggplot(county_pop %>% filter(!is.na(metro)),
+         aes(x = pop2000 / 1e3, y = pct_change, colour = metro)) +
+    geom_hline(yintercept = 0, linetype = "dashed", colour = "grey50") +
+    geom_point(alpha = 0.3, size = 0.9) +
+    geom_smooth(aes(group = metro), method = "loess",
+                se = FALSE, linewidth = 1, span = 0.6) +
+    scale_colour_manual(values = c("Metro" = "#2166ac", "Nonmetro" = "#d73027")) +
+    scale_x_log10(labels = label_comma(suffix = "k")) +
+    scale_y_continuous(labels = label_number(suffix = "%"),
+                       limits = c(-80, 200)) +
+    labs(
+      title    = "County Growth Rate vs. Population – Metro vs. Nonmetro",
+      subtitle = "Metro = RUCC 1–3  |  Nonmetro = RUCC 4–9",
+      x        = "2000 Population (thousands) — log scale",
+      y        = "% Change 2000–2020",
+      colour   = NULL,
+      caption  = "Source: U.S. Decennial Census & USDA ERS RUCC 2013"
+    ) +
+    theme_minimal(base_size = 11) +
+    theme(legend.position  = "top",
+          panel.grid.minor = element_blank())
+} else {
+  cat("Metro classification unavailable – plot skipped.\n")
+}
+```
+
+## 2.5 Population Pyramids – Illinois Counties
+
+### Helper: Age/Sex Variables
+
+```{r pyramid-vars}
+# ACS 5-year 2020 – Table B01001 (Sex by Age)
+acs_vars <- load_variables(2020, "acs5", cache = TRUE)
+
+male_vars <- acs_vars %>%
+  filter(str_detect(name, "^B01001_0") & str_detect(label, "Male")) %>%
+  filter(!str_detect(label, "Female")) %>%
+  pull(name)
+
+female_vars <- acs_vars %>%
+  filter(str_detect(name, "^B01001_0") & str_detect(label, "Female")) %>%
+  pull(name)
+
+# Standard 18 male age groups: B01001_003 – B01001_025 (skip _002 = total male)
+male_vars   <- paste0("B01001_", str_pad(3:25, 3, pad = "0"))
+female_vars <- paste0("B01001_", str_pad(27:49, 3, pad = "0"))
+
+age_labels <- c(
+  "Under 5", "5-9", "10-14", "15-17", "18-19", "20",
+  "21", "22-24", "25-29", "30-34", "35-39", "40-44",
+  "45-49", "50-54", "55-59", "60-61", "62-64", "65-66",
+  "67-69", "70-74", "75-79", "80-84", "85+"
+)
+
+# Broader 9-group labels for readability
+broad_labels <- c(
+  "<5","5–9","10–14","15–17","18–19","20","21","22–24",
+  "25–29","30–34","35–39","40–44","45–49","50–54",
+  "55–59","60–61","62–64","65–66","67–69","70–74",
+  "75–79","80–84","85+"
+)
+```
+
+### Illinois: Metro vs. Nonmetro
+
+```{r illinois-pyramid, fig.height=7, cache=TRUE}
+# Pull ACS age/sex for all Illinois counties
+il_vars <- c(male_vars, female_vars)
+
+il_acs <- get_acs(
+  geography = "county",
+  state     = "IL",
+  variables = il_vars,
+  year      = 2020,
+  survey    = "acs5"
+)
+
+# Attach RUCC classification for Illinois
+il_rucc <- county_pop %>%
+  filter(str_sub(GEOID, 1, 2) == "17") %>%   # Illinois FIPS = 17
+  select(GEOID, metro)
+
+il_pyramid_data <- il_acs %>%
+  left_join(il_rucc, by = "GEOID") %>%
+  filter(!is.na(metro)) %>%
+  mutate(
+    sex       = ifelse(variable %in% male_vars, "Male", "Female"),
+    age_idx   = ifelse(sex == "Male",
+                       match(variable, male_vars),
+                       match(variable, female_vars)),
+    age_group = broad_labels[age_idx]
+  ) %>%
+  group_by(metro, sex, age_group, age_idx) %>%
+  summarise(pop = sum(estimate, na.rm = TRUE), .groups = "drop") %>%
+  group_by(metro) %>%
+  mutate(pct = pop / sum(pop) * 100) %>%
+  ungroup() %>%
+  mutate(
+    pct      = ifelse(sex == "Male", -pct, pct),
+    age_group = factor(age_group, levels = broad_labels)
+  )
+
+# Build side-by-side pyramids
+metro_pyramid <- function(df, title_suffix) {
+  ggplot(df, aes(x = pct, y = age_group, fill = sex)) +
+    geom_col(width = 0.8, alpha = 0.85) +
+    geom_vline(xintercept = 0, colour = "grey30", linewidth = 0.4) +
+    scale_fill_manual(values = c("Male" = "#4393c3", "Female" = "#d6604d")) +
+    scale_x_continuous(
+      labels = function(x) paste0(abs(round(x, 1)), "%"),
+      limits = c(-6.5, 6.5)
+    ) +
+    labs(
+      title = title_suffix,
+      x = "% of total county group population",
+      y = NULL, fill = NULL
+    ) +
+    theme_minimal(base_size = 9) +
+    theme(
+      legend.position  = "top",
+      panel.grid.minor = element_blank()
+    )
+}
+
+p_metro    <- metro_pyramid(filter(il_pyramid_data, metro == "Metro"),
+                            "Metro Counties")
+p_nonmetro <- metro_pyramid(filter(il_pyramid_data, metro == "Nonmetro"),
+                            "Nonmetro Counties")
+
+(p_metro | p_nonmetro) +
+  plot_annotation(
+    title    = "Population Pyramids – Illinois Counties",
+    subtitle = "Metro (RUCC 1–3) vs. Nonmetro (RUCC 4–9) · ACS 2020 5-year estimates",
+    caption  = "Source: U.S. Census Bureau ACS 2020 via tidycensus"
+  )
+```
+
+### Midwest: Metro, Micropolitan & Rural (Three-way Comparison)
+
+```{r midwest-pyramid, fig.height=8, cache=TRUE}
+midwest_fips <- c("17","18","19","20","26","27","29","31","38","39","46","55")
+# IL IN IA KS MI MN MO NE ND OH SD WI
+
+mw_acs <- get_acs(
+  geography = "county",
+  state     = midwest_fips,
+  variables = il_vars,
+  year      = 2020,
+  survey    = "acs5"
+)
+
+mw_rucc <- county_pop %>%
+  filter(str_sub(GEOID, 1, 2) %in% midwest_fips) %>%
+  select(GEOID, metro3)
+
+mw_pyramid_data <- mw_acs %>%
+  left_join(mw_rucc, by = "GEOID") %>%
+  filter(!is.na(metro3)) %>%
+  mutate(
+    sex       = ifelse(variable %in% male_vars, "Male", "Female"),
+    age_idx   = ifelse(sex == "Male",
+                       match(variable, male_vars),
+                       match(variable, female_vars)),
+    age_group = broad_labels[age_idx]
+  ) %>%
+  group_by(metro3, sex, age_group, age_idx) %>%
+  summarise(pop = sum(estimate, na.rm = TRUE), .groups = "drop") %>%
+  group_by(metro3) %>%
+  mutate(pct = pop / sum(pop) * 100) %>%
+  ungroup() %>%
+  mutate(
+    pct       = ifelse(sex == "Male", -pct, pct),
+    age_group = factor(age_group, levels = broad_labels),
+    metro3    = factor(metro3, levels = c("Metro", "Micropolitan", "Rural"))
+  )
+
+p_mw_metro <- metro_pyramid(filter(mw_pyramid_data, metro3 == "Metro"),
+                             "Metro")
+p_mw_micro <- metro_pyramid(filter(mw_pyramid_data, metro3 == "Micropolitan"),
+                             "Micropolitan")
+p_mw_rural <- metro_pyramid(filter(mw_pyramid_data, metro3 == "Rural"),
+                             "Rural")
+
+(p_mw_metro | p_mw_micro | p_mw_rural) +
+  plot_annotation(
+    title    = "Population Pyramids – Midwest U.S.",
+    subtitle = "Metro · Micropolitan · Rural  |  ACS 2020 5-year estimates",
+    caption  = "Midwest = IL, IN, IA, KS, MI, MN, MO, NE, ND, OH, SD, WI\nSource: U.S. Census Bureau ACS 2020 via tidycensus"
+  )
+```
+
+## 2.6 Choropleth Map – Midwest County Population Change 2000–2020
+
+```{r choropleth-midwest, fig.height=8, cache=TRUE}
+# Download county shapefiles for Midwest states
+#mw_counties <- map_dfr(
+ # midwest_fips,
+  #~ counties(state = .x, cb = TRUE, year = 2020, class = "sf")
+#)
+
+all_counties <- counties(cb = TRUE, year = 2020, class = "sf")
+mw_counties  <- all_counties %>% filter(STATEFP %in% midwest_fips)
+
+# Join with population change data
+mw_map <- mw_counties %>%
+  left_join(county_pop %>% select(GEOID, pct_change), by = "GEOID")
+
+# Symmetric diverging breaks centred at 0
+brk_max <- 80
+mw_map <- mw_map %>%
+  mutate(pct_clipped = pmax(pmin(pct_change, brk_max), -brk_max))
+
+ggplot(mw_map) +
+  geom_sf(aes(fill = pct_clipped), colour = "white", linewidth = 0.08) +
+  scale_fill_gradient2(
+    low      = "#d73027",
+    mid      = "#ffffbf",
+    high     = "#1a9641",
+    midpoint = 0,
+    limits   = c(-brk_max, brk_max),
+    breaks   = seq(-brk_max, brk_max, 20),
+    labels   = function(x) paste0(ifelse(x > 0, "+", ""), x, "%"),
+    name     = "% Change\n2000–2020",
+    oob      = scales::squish
+  ) +
+  coord_sf(datum = NA) +
+  labs(
+    title    = "County Population Change in the Midwest (2000–2020)",
+    subtitle = "IL · IN · IA · KS · MI · MN · MO · NE · ND · OH · SD · WI",
+    caption  = "Source: U.S. Decennial Census 2000 & 2020 via tidycensus\nCounties clipped to ±80% for colour scale clarity"
+  ) +
+  theme_void(base_size = 11) +
+  theme(
+    plot.title    = element_text(face = "bold", size = 13),
+    plot.subtitle = element_text(size = 10, colour = "grey40"),
+    plot.caption  = element_text(size = 8,  colour = "grey50"),
+    legend.position = "right"
+  )
+```
+
+\newpage
+
+# Summary
+
+## Key Findings – Japan
+
+- **Growing prefectures (2020):** Okinawa and the three major metro areas (Tokyo, Aichi, Osaka) consistently showed positive growth relative to 1995, while rural/northern prefectures (Akita, Aomori, Kochi) declined most sharply.
+- **City size:** Larger cities (Metro 700k+) tended to grow or hold steady, while small cities (<30k) disproportionately declined — consistent with urbanisation patterns.
+- **Density–growth correlation:** A `r if(exists("r_dens")) round(r_dens,3) else "..."` Pearson correlation between 1995 population density and 1995–2020 % change indicates that denser prefectures generally experienced stronger growth, reflecting urban concentration.
+
+## Key Findings – United States
+
+- **Metro advantage:** Metro counties (RUCC 1–3) showed higher median growth rates than nonmetro counties, but also greater variance driven by Sun Belt metros.
+- **Illinois pyramids:** Metro counties show a more working-age-heavy pyramid; nonmetro counties have a relatively older profile with a larger share of 55+ age groups.
+- **Midwest choropleth:** Suburban counties surrounding major metros (Chicago, Columbus, Minneapolis) grew substantially, while many rural counties in the Great Plains (North/South Dakota, rural Iowa) experienced decline.
+
+---
+
+*Analysis produced with R `r R.version$major`.`r R.version$minor`; key packages: tidycensus `r packageVersion("tidycensus")`, ggplot2 `r packageVersion("ggplot2")`, sf `r packageVersion("sf")`.*

@@ -1,0 +1,534 @@
+---
+title: "Demographic Analysis: Japan & U.S. Census"
+author: "Shuja Waraich"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    fig_width: 8
+    fig_height: 5
+    latex_engine: xelatex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  cache = TRUE
+)
+
+library(tidyverse)
+library(readxl)
+library(scales)
+library(knitr)
+library(kableExtra)
+```
+
+\newpage
+
+# Analysis of Japanese Demographic Data
+
+## Data Loading and Preparation
+
+```{r load-japan-data}
+# Load subdivisions data (population by year)
+subdivisions <- read_excel("japan-subdivisions.xlsx") %>%
+  select(Name, Status, pop1995:pop2020)
+
+# Load prefecture areas data (skip the blank first row)
+areas_raw <- read_excel("japan-prefecture-areas.xlsx", skip = 2)
+
+# Clean column names for the areas file
+names(areas_raw) <- c("Rank", "Prefecture", "Japanese", "EstArea_km2",
+                       "DetArea_km2", "UndetArea_km2", "Population",
+                       "Density_per_km2", "InhabArea_km2",
+                       "InhabDensity_per_km2", "ForestPct", "Capital")
+
+areas <- areas_raw %>%
+  filter(!is.na(Rank)) %>%
+  mutate(across(c(Rank, EstArea_km2, DetArea_km2, Population,
+                  Density_per_km2), as.numeric))
+```
+
+## Prefecture-Level Population Percentage Changes (1995--2020)
+
+```{r prefecture-pct-change}
+# Filter for prefectures only
+prefectures <- subdivisions %>%
+  filter(Status == "Prefecture") %>%
+  mutate(across(pop1995:pop2020, as.numeric))
+
+# Calculate percentage change relative to 1995
+pref_change <- prefectures %>%
+  mutate(
+    pct_2000 = (pop2000 - pop1995) / pop1995 * 100,
+    pct_2005 = (pop2005 - pop1995) / pop1995 * 100,
+    pct_2010 = (pop2010 - pop1995) / pop1995 * 100,
+    pct_2015 = (pop2015 - pop1995) / pop1995 * 100,
+    pct_2020 = (pop2020 - pop1995) / pop1995 * 100
+  )
+
+# Display summary table
+pref_change %>%
+  select(Name, pop1995, pop2020, pct_2020) %>%
+  arrange(desc(pct_2020)) %>%
+  mutate(pop1995 = comma(pop1995),
+         pop2020 = comma(pop2020),
+         pct_2020 = round(pct_2020, 2)) %>%
+  rename(`Prefecture` = Name,
+         `Pop. 1995` = pop1995,
+         `Pop. 2020` = pop2020,
+         `% Change (1995-2020)` = pct_2020) %>%
+  kable(caption = "Population Change by Prefecture (1995--2020)",
+        booktabs = TRUE) %>%
+  kable_styling(latex_options = c("striped", "hold_position", "scale_down"),
+                font_size = 8)
+```
+
+## Time Series Plot: Percentage Change Relative to 1995
+
+```{r time-series-plot, fig.cap="Percentage Population Change Relative to 1995 by Prefecture", fig.height=7}
+# Reshape to long format for plotting
+pref_long <- pref_change %>%
+  select(Name, starts_with("pct_")) %>%
+  pivot_longer(cols = starts_with("pct_"),
+               names_to = "year",
+               values_to = "pct_change") %>%
+  mutate(year = as.numeric(str_extract(year, "\\d{4}")))
+
+# Add the baseline year (1995 = 0%)
+baseline <- prefectures %>%
+  select(Name) %>%
+  mutate(year = 1995, pct_change = 0)
+
+pref_long <- bind_rows(baseline, pref_long)
+
+# Identify top gainers and losers for labeling
+extremes <- pref_change %>%
+  arrange(desc(pct_2020)) %>%
+  slice(c(1:3, (n()-2):n())) %>%
+  pull(Name)
+
+ggplot(pref_long, aes(x = year, y = pct_change, group = Name)) +
+  geom_line(data = filter(pref_long, !Name %in% extremes),
+            alpha = 0.3, color = "grey60", linewidth = 0.4) +
+  geom_line(data = filter(pref_long, Name %in% extremes),
+            aes(color = Name), linewidth = 0.9) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
+  scale_x_continuous(breaks = seq(1995, 2020, 5)) +
+  labs(x = "Year", y = "% Change Relative to 1995",
+       title = "Population Change by Prefecture (1995--2020)",
+       color = "Prefecture") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+The plot highlights the top 3 growing and bottom 3 declining prefectures in color, with all other prefectures shown in grey. Most prefectures experienced population decline since 1995, while a handful of urban prefectures (e.g., Tokyo-area) grew.
+
+## Scatter Plot: 1995 Population vs. 1995--2020 Percentage Change
+
+```{r scatter-pop-vs-change, fig.cap="1995 Population vs. Percentage Change (1995--2020)"}
+ggplot(pref_change, aes(x = pop1995, y = pct_2020)) +
+  geom_point(color = "steelblue", size = 2.5) +
+  geom_smooth(method = "lm", se = TRUE, color = "firebrick", linetype = "dashed") +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  scale_x_continuous(labels = comma) +
+  labs(x = "Population in 1995",
+       y = "% Change (1995--2020)",
+       title = "Larger Prefectures Tend to Grow (or Decline Less)") +
+  theme_minimal()
+
+cor_val <- cor(pref_change$pop1995, pref_change$pct_2020)
+```
+
+**Correlation coefficient (Pearson):** `r round(cor_val, 3)`. There is a positive relationship between 1995 population size and subsequent growth---larger prefectures tended to grow or at least decline less than smaller ones.
+
+## City-Level Analysis: Does City Size Relate to Population Change?
+
+```{r city-analysis, fig.cap="City Population in 1995 vs. Percentage Change (1995--2020)"}
+# Filter for cities only
+cities <- subdivisions %>%
+  filter(str_detect(Status, "City")) %>%
+  mutate(across(pop1995:pop2020, as.numeric)) %>%
+  filter(!is.na(pop1995), pop1995 > 0) %>%
+  mutate(pct_change = (pop2020 - pop1995) / pop1995 * 100)
+
+# Categorize city size
+cities <- cities %>%
+  mutate(size_cat = case_when(
+    pop1995 >= 1000000 ~ "Large (1M+)",
+    pop1995 >= 500000  ~ "Medium (500K-1M)",
+    pop1995 >= 100000  ~ "Small (100K-500K)",
+    TRUE               ~ "Town (<100K)"
+  ),
+  size_cat = factor(size_cat, levels = c("Town (<100K)", "Small (100K-500K)",
+                                          "Medium (500K-1M)", "Large (1M+)")))
+
+ggplot(cities, aes(x = pop1995, y = pct_change)) +
+  geom_point(aes(color = size_cat), alpha = 0.5, size = 1.5) +
+  geom_smooth(method = "lm", se = TRUE, color = "black", linetype = "dashed") +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  scale_x_log10(labels = comma) +
+  labs(x = "City Population in 1995 (log scale)",
+       y = "% Change (1995--2020)",
+       title = "City Size and Population Change",
+       color = "City Size") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+```{r city-summary-table}
+cities %>%
+  group_by(size_cat) %>%
+  summarise(
+    n = n(),
+    mean_change = round(mean(pct_change, na.rm = TRUE), 2),
+    median_change = round(median(pct_change, na.rm = TRUE), 2),
+    .groups = "drop"
+  ) %>%
+  rename(`City Size Category` = size_cat,
+         `Count` = n,
+         `Mean % Change` = mean_change,
+         `Median % Change` = median_change) %>%
+  kable(caption = "Population Change by City Size Category",
+        booktabs = TRUE) %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+```
+
+Larger cities tend to maintain or grow their population, while smaller towns and cities are more likely to experience decline.
+
+## Correlation: Population Density vs. Percentage Growth
+
+```{r density-correlation, fig.cap="Population Density vs. Percentage Growth (1995--2020)"}
+# Merge prefecture changes with area/density data
+density_df <- pref_change %>%
+  left_join(areas, by = c("Name" = "Prefecture")) %>%
+  filter(!is.na(Density_per_km2))
+
+ggplot(density_df, aes(x = Density_per_km2, y = pct_2020)) +
+  geom_point(color = "darkorange", size = 2.5) +
+  geom_smooth(method = "lm", se = TRUE, color = "firebrick", linetype = "dashed") +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  scale_x_log10() +
+  labs(x = "Population Density (per km², log scale)",
+       y = "% Change (1995--2020)",
+       title = "Denser Prefectures Show Greater Population Resilience") +
+  theme_minimal()
+
+density_cor <- cor(log(density_df$Density_per_km2), density_df$pct_2020,
+                   use = "complete.obs")
+```
+
+**Correlation (log-density vs. % change):** `r round(density_cor, 3)`. Higher population density is positively associated with population growth, confirming that urbanized prefectures are better at retaining and attracting residents.
+
+\newpage
+
+# U.S. Census & TidyCensus Analysis
+
+```{r load-us-packages}
+library(tidycensus)
+library(sf)
+library(tigris)
+library(viridis)
+options(tigris_use_cache = TRUE)
+census_api_key("cae79ee00ab828454493cdbc63e0d615494c2a5e", install = FALSE)
+```
+
+## Population Change: County-Level 2000 to 2020
+
+```{r us-pop-change, cache=TRUE}
+# 2000 Decennial Census: P001001 = Total Population (SF1)
+pop_2000 <- get_decennial(
+  geography = "county",
+  variables = "P001001",
+  year = 2000,
+  sumfile = "sf1"
+) %>%
+  rename(pop2000 = value) %>%
+  select(GEOID, NAME, pop2000)
+
+# 2020 Decennial Census: P1_001N = Total Population (PL 94-171)
+pop_2020 <- get_decennial(
+  geography = "county",
+  variables = "P1_001N",
+  year = 2020
+) %>%
+  rename(pop2020 = value) %>%
+  select(GEOID, NAME, pop2020)
+
+# Merge and calculate percentage change
+us_county_change <- pop_2000 %>%
+  inner_join(pop_2020, by = "GEOID") %>%
+  mutate(pct_change = (pop2020 - pop2000) / pop2000 * 100) %>%
+  rename(NAME = NAME.x) %>%
+  select(GEOID, NAME, pop2000, pop2020, pct_change)
+
+us_county_change %>%
+  arrange(desc(pct_change)) %>%
+  slice(c(1:5, (n()-4):n())) %>%
+  mutate(across(c(pop2000, pop2020), comma),
+         pct_change = round(pct_change, 1)) %>%
+  kable(caption = "Top 5 and Bottom 5 Counties by Population Change (2000--2020)",
+        booktabs = TRUE) %>%
+  kable_styling(latex_options = c("striped", "hold_position", "scale_down"))
+```
+
+## Variable Verification
+
+**P001001 (2000 Decennial Census):**
+This variable comes from **Summary File 1 (SF1)**, Table P1 ("Total Population"). It provides the complete count of all persons enumerated in the 2000 Census.
+
+**P1_001N (2020 Decennial Census):**
+This variable comes from the **PL 94-171 Redistricting Data** file, Table P1 ("Race"). The `_001N` suffix indicates the total population count. This is the primary redistricting dataset released from the 2020 Census.
+
+## U.S. Scatter Plots
+
+### Growth Rate vs. Total Population
+
+```{r us-scatter-basic, fig.cap="Growth Rate vs. Population for U.S. Counties"}
+ggplot(us_county_change, aes(x = pop2000, y = pct_change)) +
+  geom_point(alpha = 0.3, size = 0.8, color = "steelblue") +
+  geom_smooth(method = "lm", se = TRUE, color = "firebrick") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  scale_x_log10(labels = comma) +
+  coord_cartesian(ylim = c(-75, 200)) +
+  labs(x = "Total Population in 2000 (log scale)",
+       y = "% Change (2000--2020)",
+       title = "County Population Growth vs. Size") +
+  theme_minimal()
+```
+
+### RUCC Classification
+
+```{r load-rucc, cache=TRUE}
+# Load USDA Rural-Urban Continuum Codes (pre-downloaded XLS)
+rucc <- read_excel("rucc2013.xls") %>%
+  mutate(FIPS = str_pad(FIPS, 5, pad = "0")) %>%
+  select(FIPS, RUCC_2013, Description)
+
+# Merge with county change data
+us_rucc <- us_county_change %>%
+  left_join(rucc, by = c("GEOID" = "FIPS")) %>%
+  filter(!is.na(RUCC_2013)) %>%
+  mutate(
+    RUCC_2013 = factor(RUCC_2013),
+    metro_status = ifelse(as.numeric(as.character(RUCC_2013)) <= 3,
+                          "Metro", "Nonmetro")
+  )
+```
+
+```{r scatter-rucc, fig.cap="Growth Rate Colored by RUCC Code", fig.height=6}
+ggplot(us_rucc, aes(x = pop2000, y = pct_change, color = RUCC_2013)) +
+  geom_point(alpha = 0.4, size = 0.9) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  scale_x_log10(labels = comma) +
+  scale_color_viridis_d(option = "turbo") +
+  coord_cartesian(ylim = c(-75, 200)) +
+  labs(x = "Population in 2000 (log scale)",
+       y = "% Change (2000--2020)",
+       title = "County Growth by RUCC Code",
+       color = "RUCC") +
+  theme_minimal() +
+  theme(legend.position = "right")
+```
+
+### Metro vs. Nonmetro Classification
+
+```{r scatter-metro, fig.cap="Growth Rate: Metro (RUCC 1-3) vs. Nonmetro (RUCC 4-9)"}
+ggplot(us_rucc, aes(x = pop2000, y = pct_change, color = metro_status)) +
+  geom_point(alpha = 0.3, size = 0.9) +
+  geom_smooth(method = "lm", se = TRUE) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  scale_x_log10(labels = comma) +
+  scale_color_manual(values = c("Metro" = "#2166AC", "Nonmetro" = "#B2182B")) +
+  coord_cartesian(ylim = c(-75, 200)) +
+  labs(x = "Population in 2000 (log scale)",
+       y = "% Change (2000--2020)",
+       title = "Metro vs. Nonmetro County Growth",
+       color = "Classification") +
+  theme_minimal()
+```
+
+Metro counties tend to grow faster on average, while nonmetro counties are more likely to experience population decline.
+
+## Population Pyramids
+
+### Metro vs. Nonmetro in Illinois
+
+```{r il-pyramid-data, cache=TRUE}
+# Get age/sex data for Illinois counties from ACS 2020
+il_age_vars <- paste0("B01001_", str_pad(2:49, 3, pad = "0"))
+
+il_agesex <- get_acs(
+  geography = "county",
+  variables = il_age_vars,
+  state = "IL",
+  year = 2020,
+  survey = "acs5"
+)
+
+# Map variable codes to age groups and sex
+# B01001_002 = Male total, B01001_003-025 = Male age groups
+# B01001_026 = Female total, B01001_027-049 = Female age groups
+age_labels <- c(
+  "Under 5", "5-9", "10-14", "15-17", "18-19", "20", "21",
+  "22-24", "25-29", "30-34", "35-39", "40-44", "45-49",
+  "50-54", "55-59", "60-61", "62-64", "65-66", "67-69",
+  "70-74", "75-79", "80-84", "85+"
+)
+
+male_vars <- paste0("B01001_", str_pad(3:25, 3, pad = "0"))
+female_vars <- paste0("B01001_", str_pad(27:49, 3, pad = "0"))
+
+male_map <- tibble(variable = male_vars, age = age_labels, sex = "Male")
+female_map <- tibble(variable = female_vars, age = age_labels, sex = "Female")
+var_map <- bind_rows(male_map, female_map)
+
+il_pyramid <- il_agesex %>%
+  inner_join(var_map, by = "variable") %>%
+  left_join(rucc %>% rename(GEOID = FIPS), by = "GEOID") %>%
+  filter(!is.na(RUCC_2013)) %>%
+  mutate(metro_status = ifelse(RUCC_2013 <= 3, "Metro", "Nonmetro"))
+
+# Aggregate age groups into broader bins for readability
+il_pyramid <- il_pyramid %>%
+  mutate(age_group = case_when(
+    age %in% c("Under 5", "5-9")           ~ "0-9",
+    age %in% c("10-14", "15-17")            ~ "10-17",
+    age %in% c("18-19", "20", "21", "22-24") ~ "18-24",
+    age %in% c("25-29", "30-34")            ~ "25-34",
+    age %in% c("35-39", "40-44")            ~ "35-44",
+    age %in% c("45-49", "50-54")            ~ "45-54",
+    age %in% c("55-59", "60-61", "62-64")   ~ "55-64",
+    age %in% c("65-66", "67-69", "70-74")   ~ "65-74",
+    age %in% c("75-79", "80-84", "85+")     ~ "75+"
+  )) %>%
+  mutate(age_group = factor(age_group,
+    levels = c("0-9","10-17","18-24","25-34","35-44",
+               "45-54","55-64","65-74","75+")))
+```
+
+```{r il-pyramid-plot, fig.cap="Population Pyramids: Metro vs. Nonmetro Counties in Illinois", fig.height=5}
+il_pyr_agg <- il_pyramid %>%
+  group_by(metro_status, sex, age_group) %>%
+  summarise(pop = sum(estimate, na.rm = TRUE), .groups = "drop") %>%
+  group_by(metro_status) %>%
+  mutate(pct = pop / sum(pop) * 100) %>%
+  ungroup() %>%
+  mutate(pct = ifelse(sex == "Male", -pct, pct))
+
+ggplot(il_pyr_agg, aes(x = age_group, y = pct, fill = sex)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  facet_wrap(~ metro_status) +
+  scale_fill_manual(values = c("Male" = "#4393C3", "Female" = "#D6604D")) +
+  scale_y_continuous(labels = function(x) paste0(abs(round(x, 1)), "%")) +
+  labs(x = "Age Group", y = "% of Population",
+       title = "Illinois Population Pyramids: Metro vs. Nonmetro",
+       fill = "Sex") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+### Three-Way Comparison: Metro, Micro, and Rural in the Midwest
+
+```{r midwest-pyramid-data, cache=TRUE}
+midwest_states <- c("IL", "IN", "IA", "KS", "MI", "MN", "MO",
+                    "NE", "ND", "OH", "SD", "WI")
+
+mw_agesex <- get_acs(
+  geography = "county",
+  variables = il_age_vars,
+  state = midwest_states,
+  year = 2020,
+  survey = "acs5"
+)
+
+mw_pyramid <- mw_agesex %>%
+  inner_join(var_map, by = "variable") %>%
+  left_join(rucc %>% rename(GEOID = FIPS), by = "GEOID") %>%
+  filter(!is.na(RUCC_2013)) %>%
+  mutate(
+    urban_class = case_when(
+      RUCC_2013 <= 3 ~ "Metro",
+      RUCC_2013 <= 7 ~ "Micro",
+      TRUE           ~ "Rural"
+    ),
+    urban_class = factor(urban_class, levels = c("Metro", "Micro", "Rural"))
+  ) %>%
+  mutate(age_group = case_when(
+    age %in% c("Under 5", "5-9")           ~ "0-9",
+    age %in% c("10-14", "15-17")            ~ "10-17",
+    age %in% c("18-19", "20", "21", "22-24") ~ "18-24",
+    age %in% c("25-29", "30-34")            ~ "25-34",
+    age %in% c("35-39", "40-44")            ~ "35-44",
+    age %in% c("45-49", "50-54")            ~ "45-54",
+    age %in% c("55-59", "60-61", "62-64")   ~ "55-64",
+    age %in% c("65-66", "67-69", "70-74")   ~ "65-74",
+    age %in% c("75-79", "80-84", "85+")     ~ "75+"
+  )) %>%
+  mutate(age_group = factor(age_group,
+    levels = c("0-9","10-17","18-24","25-34","35-44",
+               "45-54","55-64","65-74","75+")))
+```
+
+```{r midwest-pyramid-plot, fig.cap="Midwest Population Pyramids: Metro vs. Micro vs. Rural", fig.height=5, fig.width=10}
+mw_pyr_agg <- mw_pyramid %>%
+  group_by(urban_class, sex, age_group) %>%
+  summarise(pop = sum(estimate, na.rm = TRUE), .groups = "drop") %>%
+  group_by(urban_class) %>%
+  mutate(pct = pop / sum(pop) * 100) %>%
+  ungroup() %>%
+  mutate(pct = ifelse(sex == "Male", -pct, pct))
+
+ggplot(mw_pyr_agg, aes(x = age_group, y = pct, fill = sex)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  facet_wrap(~ urban_class, ncol = 3) +
+  scale_fill_manual(values = c("Male" = "#4393C3", "Female" = "#D6604D")) +
+  scale_y_continuous(labels = function(x) paste0(abs(round(x, 1)), "%")) +
+  labs(x = "Age Group", y = "% of Population",
+       title = "Midwest Population Pyramids by Urbanization Level",
+       fill = "Sex") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+Rural areas show a notably older age structure with proportionally fewer working-age adults (25--44), consistent with youth outmigration to metro areas.
+
+## Geospatial Mapping: Midwest County Population Change
+
+```{r midwest-map, cache=TRUE, fig.cap="Percentage Population Change (2000--2020) in Midwest Counties", fig.height=7, fig.width=9}
+# Get county geometries for Midwest states
+mw_fips <- c("17","18","19","20","26","27","29","31","38","39","46","55")
+
+mw_counties <- counties(state = mw_fips, year = 2020, cb = TRUE) %>%
+  st_transform(crs = 5070)
+
+# Merge with population change data
+mw_map_data <- mw_counties %>%
+  left_join(us_county_change, by = "GEOID") %>%
+  mutate(pct_change_capped = pmin(pmax(pct_change, -50), 50))
+
+ggplot(mw_map_data) +
+  geom_sf(aes(fill = pct_change_capped), color = "grey80", linewidth = 0.05) +
+  scale_fill_gradient2(
+    low = "#B2182B", mid = "white", high = "#2166AC",
+    midpoint = 0,
+    limits = c(-50, 50),
+    name = "% Change\n(2000-2020)",
+    labels = function(x) ifelse(abs(x) == 50, paste0(x, "+"), x)
+  ) +
+  labs(title = "Population Change in Midwest Counties (2000--2020)") +
+  theme_void() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    legend.position = "right"
+  )
+```
+
+The choropleth reveals a stark urban-rural divide: metropolitan cores and suburban rings (blue) grew, while vast swaths of rural counties (red) experienced significant population loss over the past two decades.

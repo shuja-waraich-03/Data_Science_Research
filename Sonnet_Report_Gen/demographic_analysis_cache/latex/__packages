@@ -1,0 +1,17 @@
+readxl
+dplyr
+tidyr
+ggplot2
+ggrepel
+scales
+tidycensus
+tigris
+sf
+patchwork
+knitr
+kableExtra
+viridisLite
+viridis
+RColorBrewer
+stringr
+purrr
