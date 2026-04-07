@@ -1,0 +1,5 @@
+# Use Python 3.11 or 3.12 (prebuilt wheels for pyarrow/ipumspy).
+ipumspy>=0.7.0
+pandas>=2.0.0
+matplotlib>=3.7.0
+jupyter>=1.0.0
