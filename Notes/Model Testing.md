@@ -1,0 +1,50 @@
+# Model Testing
+
+---
+
+## Problem Set 1: Japan Population Decline
+
+### Dataset
+- `japan-subdivisions.xlsx` — Population data by prefecture (1995–2020)
+- `japan-prefecture-areas.xlsx` — Prefecture areas and population density (column H)
+
+### Question
+Japan is generally considered the canary in the coal mine for demographic decline--populations are falling faster in Japan than just about any other industrialized nation, and they have been for some time.    Here are some questions you should try to answer--and be prepared to present:
+
+a. What are the percentage changes in population for the prefectures in Japan from 1995 to 2020?  (See the japan-subdivisions.xlsx spreadsheet.) 
+b. Produce a time series (i.e., line) plot showing the *percentage* change in populations for prefectures relative to the 1995 populatiton for each year 2000, 2005, ..., 2020?
+c. Does the population in 1995 seem to be related to the percentage change in population for a prefecture from 1995 to 2020?  (Produce a scatter plot? A statistic?)
+d. What about the *cities* in the original data set?  Does there seem to be a relation between city size and percentage change in population?
+e. The questions above are questions about how cities are faring with demographic change relative to their size, which is a rough measure of 'rural vs urban'.  Another measure of rural vs urban is population density.  This is given for the prefectures in the japan-prefecture-areas.xlsx spreadsheet (column H).  Does there seem to be a relation between population density and percenttage growth?
+
+---
+
+## Test Results
+
+<!-- START: TEMPLATE -->
+### [Model Name]
+- **Date tested:**
+- **Q1:** Passed / Failed — note
+- **Q2:** Passed / Failed — note
+- **Q3:** Passed / Failed — note
+- **Q4:** Passed / Failed — note
+- **Q5:** Passed / Failed — note
+- **Overall:**
+- **Notes:**
+- **Comments:**
+<!-- END: TEMPLATE -->
+
+### qwen3.6:35b-a3b with Open Code
+- **Date tested:** 2026-04-16
+- **Q1:** 
+- **Q2:**
+- **Q3:**
+- **Q4:**
+- **Q5:**
+- **Overall:**
+- **Notes:** Tested in both terminal and VS Code IDE
+- **Comments:**
+
+---
+
+*Add results above using the template. Last updated: 2026-04-16*
