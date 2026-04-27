@@ -26,7 +26,7 @@
 - **Open Source:**
 - **Notes:** 
 
-### Claude (Anthropic)
+### TODO
 - **Approach:** Cloud-based AI assistant
 - **Best when:** Used with Anthropic modelsv
 - **Strengths:** Most capable, most reliable, easiest to setup and deploy
@@ -39,10 +39,12 @@
 - **Approach:** CLI agent tool
 - **Similar to:** Claude
 - **Strengths:** Very modular, fully open source, model agnostic
+  - has plugin
 - **Weaknesses:**
 - **Cost:** Free / Open source
 - **Open Source:** Yes
-- **Notes:**
+- **Notes:** Did well on the first Pset with little help, only needed help with the jupyter notbook formating
+  - 
 
 ---
 
