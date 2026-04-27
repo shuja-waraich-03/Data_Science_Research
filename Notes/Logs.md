@@ -1,24 +1,82 @@
-Approaches:
+# Agent Comparison Logs
 
-Hermes: Very Agentic, biggest innovation is the long term leraning looop
+---
 
-Claude: when used with anthropic models, probably the most capable and reliable and the most expensive by far, but also the easiest to setup and deploy
+## AI Agent Profiles
 
-OpenCode: CLI tool, closest to Claude, very modular, fully open source, model agnostic
+<!-- Copy the block below and fill in for each new agent -->
+<!-- START: TEMPLATE -->
+### [Agent Name]
+- **Approach:**
+- **Key Innovation:**
+- **Best when:**
+- **Strengths:**
+- **Weaknesses:**
+- **Cost:**
+- **Open Source:**
+- **Notes:**
+<!-- END: TEMPLATE -->
 
+### Hermes + Gemini 4
+- **Approach:** Very agentic
+- **Key Innovation:** Long-term learning loop
+- **Strengths:** Agentic behavior, long-term memory
+- **Weaknesses:**
+- **Cost:**
+- **Open Source:**
+- **Notes:** 
 
+### Claude (Anthropic)
+- **Approach:** Cloud-based AI assistant
+- **Best when:** Used with Anthropic modelsv
+- **Strengths:** Most capable, most reliable, easiest to setup and deploy
+- **Weaknesses:** Most expensive by far
+- **Cost:** Most expensive
+- **Open Source:** No
+- **Notes:**
 
+### OpenCode
+- **Approach:** CLI agent tool
+- **Similar to:** Claude
+- **Strengths:** Very modular, fully open source, model agnostic
+- **Weaknesses:**
+- **Cost:** Free / Open source
+- **Open Source:** Yes
+- **Notes:**
 
+---
 
+## Notes & Observations
 
-* Get Correct Jupyter Notebook Format : Actually, the safest approach is to write a Python script that creates the notebook. That way I write Python code (not JSON) and the script handles all the escaping.
+<!-- START: TEMPLATE -->
+### [Topic]
+- **What:**
+- **Finding:**
+- **Action Item:**
+- **Date:**
+<!-- END: TEMPLATE -->
 
+### Jupyter Notebook Format
+- **What:** Creating notebooks in correct format
+- **Finding:** Writing a Python script is safest approach
+- **Why:** Writes Python code (not JSON) and handles all escaping automatically
+- **Date:** 2026-04-16
 
+### Testing qwen3.6:35b-a3b with OpenCode
+- **What:** Evaluated qwen3.6:35b-a3b
+- **Environments:** Terminal and VS Code IDE
+- **Date:** 2026-04-16
 
-Testing qwen3.6:35b-a3b with OpenCode
- - Running Open Code on both terminal and VS Code IDE C
+---
 
+## Quick Comparison Table
 
+| Tool     | Type       | Key Strength            | Open Source | Cost           |
+| -------- | ---------- | ----------------------- | ----------- | :------------- |
+| Hermes   | Agentic AI | Long-term learning loop | -           | -              |
+| Claude   | Cloud      | Most capable & reliable | No          | Most expensive |
+| OpenCode | CLI        | Modular, model-agnostic | Yes         | Open source    |
 
+---
 
-Claude code can be used with 
+*Last updated: 2026-04-16*
